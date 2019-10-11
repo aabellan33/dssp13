@@ -1,0 +1,272 @@
+---
+title: "DataCamp1 - Accidents"
+author: "Alexandre Abellan"
+date: "10/5/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
+```
+
+# Lecture des données et nettoyage
+
+```{r, results='hide', warning=FALSE}
+source("Accidents_ETL.R")
+```
+
+# Affichage des données
+
+```{r}
+# View(caracteristiques)
+```
+
+
+# Évolution du nombre de victimes
+
+
+```{r}
+data <- caracteristiques
+date <- data[,2]
+#
+levels_days <- weekdays(as.Date('1970-01-03') + 1:7)
+data$weekdays <-  factor(format(as.Date(date$date), '%A'), levels_days)
+levels_hours  <-  format(x = seq(from=as.POSIXct(x = "2010-01-01 05:00:00"), to=as.POSIXct(x = "2010-01-02 04:00:00"), by = 3600), "%H")
+data$hours    <-  factor(format(date$date, '%H'), levels = levels_hours)
+#levels_month  <-  paste(month.name)
+levels_month  <- c("01","02","03","04","05","06","07","08","09","10","11","12")
+data$month    <-  factor(format(date$date, '%m'), levels = levels_month)
+
+ggplot(data , aes(x = data$hours)) + 
+          geom_bar() +
+  labs(x='hour of day', y='#Accidents')
+
+ggplot(data , aes(x = data$month)) + 
+          geom_bar() +
+  labs(x='Month', y='#Accidents')
+```
+
+```{r}
+ggplot(data , aes(x = weekdays)) + 
+          geom_bar(aes(y = (..count..)/sum(..count..))) + 
+          scale_y_continuous(labels=scales::percent) +
+  ylab("relative frequencies")
+```
+
+``` {r}
+#Plot des accidents par departements
+spdf_departement <- readOGR(
+  "./departements/", 
+  layer= "departements-20140306-100m")
+df_departement <- fortify(spdf_departement, region = "code_insee") 
+
+#Vizu Carte avec ggplot 
+
+data_df <- df_departement %>% 
+  filter(str_length(id) == 2)
+
+myplots <- list()  # new empty list
+idx <- 1
+for (day in levels_days){
+  data_accidents <- usagers %>% 
+    left_join(data) %>% 
+    filter(gps == "Métropole", lat >40, weekdays==day)
+
+myplots[[idx]] <- ggplot( data = data_df ) + 
+      geom_polygon( mapping = aes(x = long, y = lat, group = group), color = "grey") + 
+      theme(axis.text = element_blank(), axis.title = element_blank()) + 
+      coord_quickmap() +
+      geom_point(data = data_accidents, aes(long, lat), col="black", size=.08)+
+      stat_density_2d(data = data_accidents, aes(x=long, y=lat, fill = ..level..),contour = TRUE, geom = "polygon")+
+      scale_fill_distiller(palette = "Spectral")
+      scale_fill_viridis_c()
+      labs(title = "Départements 2014", x=day)
+
+    idx <- idx+1
+}
+myplots
+```
+
+```{r}
+tmp <- data_accidents %>%
+  group_by(grav) %>% count()
+
+data_accidents$score_grav <- apply(data_accidents[,"grav"],1,function(X_){
+  if (X_=="Tué")
+    return(50)
+  else if (X_=="Blessé hospitalisé")
+    return(40)
+  else if (X_=="Blessé léger")
+    return(30)
+  else if (X_=="Indemne")
+    return(20)
+  else
+    return(NA)
+})
+```
+
+---
+```{r Knitr_Global_Options, include=FALSE}
+library(knitr)
+opts_chunk$set(warning = FALSE, message = FALSE, cache = TRUE, autodep = TRUE, tidy = FALSE)
+library(rgl)
+knit_hooks$set(webgl = hook_webgl)
+```
+
+# Dimension Reduction
+
+## PCA
+```{r}
+
+library(factoextra)
+library(FactoMineR)
+head(data_accidents)
+
+count_usagers_grav <- data_accidents %>% group_by(Num_Acc) %>% count(grav, .drop = FALSE) %>%
+  left_join(caracteristiques %>% transmute(Num_Acc, month = lubridate::floor_date(date, "month")), by = "Num_Acc") %>% 
+  group_by(month, grav) %>% count(n)
+count_usagers <- data_accidents %>% group_by(Num_Acc) %>% count() %>%
+  left_join(caracteristiques %>% transmute(Num_Acc, month = lubridate::floor_date(date, "month")), by = "Num_Acc") %>% 
+  group_by(month) %>% count(n)
+```
+
+
+## Data Preparation
+
+Transformation categorical data into numerical data
+
+
+```{r}
+sample_n(data_accidents, 3)
+model <- lm(data = data_accidents, score_grav ~ sexe )
+contrasts(data_accidents$sexe)
+
+data_accidents <- data_accidents %>%
+  mutate(sexe = relevel(sexe, ref = "Masculin"))
+
+model <- lm(data = data_accidents, score_grav ~ sexe )
+summary(model)$coef
+
+
+data_accidents <- mutate(data_accidents, lum = factor(lum))
+data_accidents <- mutate(data_accidents, atm = factor(atm))
+summary(data_accidents)
+
+
+ggplot(data = data_accidents, mapping = aes(x = month, fill = grav)) + geom_bar()
+
+```
+
+
+
+```{r}
+
+count_usagers_grav <- usagers %>% group_by(Num_Acc) %>% count(grav, .drop = FALSE) %>%
+  left_join(caracteristiques %>% transmute(Num_Acc, month = lubridate::floor_date(date, "month"))) %>% 
+  group_by(month, grav) %>% count(n)
+
+count_usagers_grav <- caracteristiques %>% left_join(usagers, by="Num_Acc") %>% group_by(com) %>% summarise()
+
+count_usagers_grav <- usagers %>% group_by(Num_Acc) %>% count(grav, .drop = FALSE) %>%
+  left_join(caracteristiques %>% transmute(Num_Acc, com)) %>% 
+  group_by(com, grav) %>% count(n)
+
+
+ggplot(data = data_accidents, mapping = aes(x = month, fill = grav)) + geom_bar()
+
+ggplot(data = count_usagers_grav   , mapping = aes(x = com)) + geom_bar()
+
+
+
+count_usagers_grav <- usagers %>% group_by(Num_Acc) %>% left_join(caracteristiques, by = "Num_Acc")
+ggplot(data = count_usagers_grav %>% group_by(grav))
+
+
+
+data_ <- count_usagers_grav %>% group_by(grav) %>% filter(gps=="Métropole")
+
+data_pca <- select (data_,-c(place, Num_Acc, gps, trajet, secuu, locp, actp, etatp, num_veh, col, com, adr, lat, long, dep, an_nais)) 
+
+
+my.acp <- function (x) {
+  n <- dim(x)[1]
+  p <- dim(x)[2]
+  # Translation, to use linear algebra
+  centre <- apply(x, 2, mean)
+  x <- x - matrix(centre, nr=n, nc=p, byrow=T)
+  # diagonalizations, base changes
+  e1 <- eigen( t(x) %*% x, symmetric=T )
+  e2 <- eigen( x %*% t(x), symmetric=T )
+  variables <- t(e2$vectors) %*% x
+  subjects <- t(e1$vectors) %*% t(x)
+  # The vectors we want are the columns of the 
+  # above matrices. To draw them, with the "pairs"
+  # function, we have to transpose them.
+  variables <- t(variables)
+  subjects <- t(subjects)
+  eigen.values <- e1$values
+  # Plot
+  plot( subjects[,1:2], 
+        xlim=c( min(c(subjects[,1],-subjects[,1])), 
+                max(c(subjects[,1],-subjects[,1])) ),
+        ylim=c( min(c(subjects[,2],-subjects[,2])), 
+                max(c(subjects[,2],-subjects[,2])) ),
+        xlab='', ylab='', frame.plot=F )
+  par(new=T)
+  plot( variables[,1:2], col='red',
+        xlim=c( min(c(variables[,1],-variables[,1])), 
+                max(c(variables[,1],-variables[,1])) ),
+        ylim=c( min(c(variables[,2],-variables[,2])), 
+                max(c(variables[,2],-variables[,2])) ),
+        axes=F, xlab='', ylab='', pch='.')
+  axis(3, col='red')
+  axis(4, col='red')
+  arrows(0,0,variables[,1],variables[,2],col='red')
+  # Return the data
+  invisible(list(data=x, centre=centre, subjects=subjects, 
+                 variables=variables, eigen.values=eigen.values))
+}
+
+accident_mortel <- data_pca %>% group_by(grav,sexe, lum) %>%
+summarise(Num_collisions = n()) %>% group_by(grav,sexe, lum) 
+
+g <- ggplot(accident_mortel, aes(x = factor(grav,
+levels = unique(grav)), y = Num_collisions))
+g + geom_bar(aes(fill = lum), stat = 'identity') +
+theme(axis.text.x = element_text(angle = 50, hjust = 1, size = 8.5)) +
+ylab('No. of Accidents') +
+xlab('Severity') +
+ggtitle('Impact of Road Departure on Fatal Accidents') +
+theme(plot.title = element_text(hjust = 0.5, size = 11)) +
+guides(fill = guide_legend('Road Departure')) +
+theme(legend.title = element_text(size = 8),
+legend.position = 'bottom',
+legend.key.size = unit(0.2,'cm'),
+legend.text = element_text(size = 7))
+
+
+library(tidyr)
+  accidents <- data_pca  %>% group_by(sexe, lum, grav) %>%
+  summarise(Num_collisions = n()) %>% group_by(sexe, lum, grav) %>% summarise(n = sum(Num_collisions))
+
+
+```
+
+
+
+
+
+
+```{r}
+
+library(alluvial)
+alluvial(accidents[,1:3], freq=accidents$Num_collisions,
+         col = ifelse( accidents$sexe == "Masculin", "lightskyblue", "pink"),
+         cex = .6)
+```
+
+
+### Bayesian study
+```{r}
+
+```
